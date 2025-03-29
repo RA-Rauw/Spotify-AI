@@ -1,8 +1,8 @@
 // Configuración de la API Spotify
-const SPOTIFY_CLIENT_ID = 'TU_CLIENT_ID'; // Reemplaza con tu Client ID
+const SPOTIFY_CLIENT_ID = '969753f2997a48a2afb69649a4f3b800'; // Reemplaza con tu Client ID
 const SPOTIFY_REDIRECT_URI = window.location.href.includes('localhost') 
     ? 'http://localhost:8000/' 
-    : 'TU_URL_PRODUCCION/';
+    : 'https://ra-rauw.github.io/Spotify-AI//';
 const SPOTIFY_SCOPES = [
     'playlist-modify-public',
     'playlist-modify-private',
@@ -15,6 +15,7 @@ const loginBtn = document.getElementById('loginBtn');
 const loginSection = document.getElementById('login-section');
 const appContent = document.getElementById('app-content');
 const generateBtn = document.getElementById('generateBtn');
+const confirmBtn = document.getElementById('confirmBtn');
 const openSpotifyBtn = document.getElementById('openSpotifyBtn');
 const newPlaylistBtn = document.getElementById('newPlaylistBtn');
 const playlistResult = document.getElementById('playlistResult');
@@ -24,6 +25,7 @@ const actionButtons = document.getElementById('actionButtons');
 let accessToken = null;
 let userId = null;
 let currentPlaylistUrl = null;
+let recommendedTracks = [];
 
 // 1. Autenticación con Spotify
 loginBtn.addEventListener('click', () => {
@@ -48,7 +50,7 @@ window.addEventListener('load', () => {
         
         // Configurar logout automático cuando expire el token
         setTimeout(() => {
-            alert('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
+            showError('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
             logout();
         }, expiresIn * 1000);
     }
@@ -78,7 +80,7 @@ async function initializeApp() {
     }
 }
 
-// 4. Generar playlist
+// 4. Generar recomendaciones (preview)
 generateBtn.addEventListener('click', async () => {
     if (!accessToken) return;
     
@@ -96,23 +98,16 @@ generateBtn.addEventListener('click', async () => {
         `;
         actionButtons.style.display = 'none';
         
-        // Paso 1: Obtener recomendaciones
+        // Obtener recomendaciones
         const recommendations = await getRecommendations(songCount, genre);
+        recommendedTracks = recommendations.tracks;
         
-        // Paso 2: Crear playlist
-        const playlist = await createPlaylist(playlistName);
+        // Mostrar vista previa
+        displayTrackPreview(recommendedTracks);
         
-        // Paso 3: Añadir canciones
-        await addTracksToPlaylist(playlist.id, recommendations.tracks);
-        
-        // Mostrar resultado
-        currentPlaylistUrl = playlist.external_urls.spotify;
-        playlistResult.innerHTML = `
-            <div class="success-message">
-                <h3>¡Playlist creada con éxito!</h3>
-                <p>${playlistName} con ${recommendations.tracks.length} canciones</p>
-            </div>
-        `;
+        // Mostrar botón de confirmación
+        confirmBtn.style.display = 'inline-flex';
+        openSpotifyBtn.style.display = 'none';
         actionButtons.style.display = 'flex';
         
     } catch (error) {
@@ -121,7 +116,46 @@ generateBtn.addEventListener('click', async () => {
     }
 });
 
-// 5. Botones de acción
+// 5. Confirmar creación de playlist
+confirmBtn.addEventListener('click', async () => {
+    if (!recommendedTracks.length) return;
+    
+    const playlistName = document.getElementById('playlistName').value || 'Mi Playlist Generada';
+    
+    try {
+        playlistResult.innerHTML = `
+            <div class="loading">
+                <i class="fas fa-spinner"></i>
+                <p>Creando tu playlist en Spotify...</p>
+            </div>
+        `;
+        
+        // Crear playlist
+        const playlist = await createPlaylist(playlistName);
+        
+        // Añadir canciones
+        await addTracksToPlaylist(playlist.id, recommendedTracks);
+        
+        // Mostrar resultado
+        currentPlaylistUrl = playlist.external_urls.spotify;
+        playlistResult.innerHTML = `
+            <div class="success-message">
+                <h3>¡Playlist creada con éxito!</h3>
+                <p>${playlistName} con ${recommendedTracks.length} canciones</p>
+            </div>
+        `;
+        
+        // Actualizar botones
+        confirmBtn.style.display = 'none';
+        openSpotifyBtn.style.display = 'inline-flex';
+        
+    } catch (error) {
+        console.error('Error al confirmar playlist:', error);
+        showError('Error al crear la playlist en Spotify');
+    }
+});
+
+// 6. Botones de acción
 openSpotifyBtn.addEventListener('click', () => {
     if (currentPlaylistUrl) {
         window.open(currentPlaylistUrl, '_blank');
@@ -132,40 +166,64 @@ newPlaylistBtn.addEventListener('click', () => {
     playlistResult.innerHTML = '';
     actionButtons.style.display = 'none';
     document.getElementById('playlistName').value = '';
+    recommendedTracks = [];
 });
 
 // Funciones de la API Spotify
 async function spotifyApiRequest(url, method = 'GET', data = null) {
-    const config = {
-        method,
-        url,
-        headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
+    try {
+        const config = {
+            method,
+            url,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        };
+        
+        if (data) {
+            config.data = data;
         }
-    };
-    
-    if (data) {
-        config.data = data;
+        
+        const response = await axios(config);
+        return response.data;
+    } catch (error) {
+        if (error.response?.status === 401) {
+            showError('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
+            logout();
+        }
+        throw error;
     }
-    
-    const response = await axios(config);
-    return response.data;
 }
 
 async function getRecommendations(limit, genre) {
     let url = `https://api.spotify.com/v1/recommendations?limit=${limit}`;
     
-    // Añadir filtro de género si no es "any"
-    if (genre !== 'any') {
-        // Primero obtenemos artistas semilla del género seleccionado
-        const artists = await spotifyApiRequest(`https://api.spotify.com/v1/search?q=genre:${genre}&type=artist&limit=5`);
-        if (artists.artists.items.length > 0) {
-            const seedArtists = artists.artists.items.map(a => a.id).join(',');
-            url += `&seed_artists=${seedArtists}`;
-        }
+    // Semillas por defecto (top tracks del usuario)
+    let seedTracks = '';
+    try {
+        const topTracks = await spotifyApiRequest(
+            `https://api.spotify.com/v1/me/top/tracks?limit=5`
+        );
+        seedTracks = topTracks.items.map(t => t.id).join(',');
+    } catch (e) {
+        console.log("No se pudieron obtener top tracks", e);
     }
-    
+
+    // Si hay género, priorizar artistas de ese género
+    if (genre !== 'any') {
+        const artists = await spotifyApiRequest(
+            `https://api.spotify.com/v1/search?q=genre:${genre}&type=artist&limit=5`
+        );
+        if (artists.artists.items.length > 0) {
+            url += `&seed_artists=${artists.artists.items.map(a => a.id).join(',')}`;
+        } else if (seedTracks) {
+            url += `&seed_tracks=${seedTracks}`;
+        }
+    } else if (seedTracks) {
+        url += `&seed_tracks=${seedTracks}`;
+    }
+
     return await spotifyApiRequest(url);
 }
 
@@ -193,6 +251,38 @@ async function addTracksToPlaylist(playlistId, tracks) {
 }
 
 // Funciones auxiliares
+function displayTrackPreview(tracks) {
+    let html = `
+        <div class="track-list">
+            <h3>Vista previa de tu playlist</h3>
+            <p>Revisa las canciones antes de crear:</p>
+            <ul>
+    `;
+    
+    tracks.forEach(track => {
+        html += `
+            <li>
+                <img src="${track.album.images.find(img => img.height === 64)?.url || track.album.images[0]?.url}" 
+                     alt="${track.name}">
+                <div class="track-info">
+                    <div class="track-name">${track.name}</div>
+                    <div class="track-artist">${track.artists.map(a => a.name).join(', ')}</div>
+                </div>
+            </li>
+        `;
+    });
+    
+    html += `
+            </ul>
+            <div class="confirm-section">
+                <p>¿Listo para crear esta playlist en tu cuenta de Spotify?</p>
+            </div>
+        </div>
+    `;
+    
+    playlistResult.innerHTML = html;
+}
+
 function showError(message) {
     playlistResult.innerHTML = `
         <div class="error-message">
@@ -205,6 +295,7 @@ function logout() {
     accessToken = null;
     userId = null;
     currentPlaylistUrl = null;
+    recommendedTracks = [];
     loginSection.style.display = 'block';
     appContent.style.display = 'none';
     playlistResult.innerHTML = '';
