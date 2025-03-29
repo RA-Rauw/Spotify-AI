@@ -5,7 +5,6 @@ const SPOTIFY_REDIRECT_URI = window.location.href.includes('localhost')
     : 'https://ra-rauw.github.io/Spotify-AI/';
 const SPOTIFY_SCOPES = [
     'playlist-modify-public',
-    'playlist-modify-private',
     'user-top-read',
     'user-library-read'
 ].join(' ');
@@ -82,7 +81,10 @@ async function initializeApp() {
 
 // 4. Generar recomendaciones (preview)
 generateBtn.addEventListener('click', async () => {
-    if (!accessToken) return;
+    if (!accessToken) {
+        showError('No estás autenticado. Conéctate con Spotify primero.');
+        return;
+    }
     
     const playlistName = document.getElementById('playlistName').value || 'Mi Playlist Generada';
     const songCount = document.getElementById('songCount').value;
@@ -98,9 +100,13 @@ generateBtn.addEventListener('click', async () => {
         `;
         actionButtons.style.display = 'none';
         
-        // Obtener recomendaciones
+        // Obtener recomendaciones (con manejo mejorado de semillas)
         const recommendations = await getRecommendations(songCount, genre);
         recommendedTracks = recommendations.tracks;
+        
+        if (!recommendedTracks || recommendedTracks.length === 0) {
+            throw new Error('No se encontraron canciones para los filtros seleccionados');
+        }
         
         // Mostrar vista previa
         displayTrackPreview(recommendedTracks);
@@ -112,7 +118,7 @@ generateBtn.addEventListener('click', async () => {
         
     } catch (error) {
         console.error('Error al generar playlist:', error);
-        showError('Error al generar la playlist. Intenta nuevamente.');
+        showError(error.message || 'Error al generar la playlist. Intenta con otro género.');
     }
 });
 
@@ -151,7 +157,7 @@ confirmBtn.addEventListener('click', async () => {
         
     } catch (error) {
         console.error('Error al confirmar playlist:', error);
-        showError('Error al crear la playlist en Spotify');
+        showError('Error al crear la playlist en Spotify. Intenta nuevamente.');
     }
 });
 
@@ -169,64 +175,43 @@ newPlaylistBtn.addEventListener('click', () => {
     recommendedTracks = [];
 });
 
-// Funciones de la API Spotify
-async function spotifyApiRequest(url, method = 'GET', data = null) {
-    try {
-        const config = {
-            method,
-            url,
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': 'application/json'
-            }
-        };
-        
-        if (data) {
-            config.data = data;
-        }
-        
-        const response = await axios(config);
-        return response.data;
-    } catch (error) {
-        if (error.response?.status === 401) {
-            showError('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
-            logout();
-        }
-        throw error;
-    }
-}
+// ----------------------------
+// Funciones clave actualizadas
+// ----------------------------
 
+// Función mejorada para obtener recomendaciones
 async function getRecommendations(limit, genre) {
-    let url = `https://api.spotify.com/v1/recommendations?limit=${limit}`;
+    let url = `https://api.spotify.com/v1/recommendations?limit=${limit}&market=ES`; // Añadido market=ES
     
-    // Semillas por defecto (top tracks del usuario)
-    let seedTracks = '';
+    // 1. Semillas por defecto (top tracks del usuario)
     try {
-        const topTracks = await spotifyApiRequest(
-            `https://api.spotify.com/v1/me/top/tracks?limit=5`
-        );
-        seedTracks = topTracks.items.map(t => t.id).join(',');
-    } catch (e) {
-        console.log("No se pudieron obtener top tracks", e);
-    }
-
-    // Si hay género, priorizar artistas de ese género
-    if (genre !== 'any') {
-        const artists = await spotifyApiRequest(
-            `https://api.spotify.com/v1/search?q=genre:${genre}&type=artist&limit=5`
-        );
-        if (artists.artists.items.length > 0) {
-            url += `&seed_artists=${artists.artists.items.map(a => a.id).join(',')}`;
-        } else if (seedTracks) {
-            url += `&seed_tracks=${seedTracks}`;
+        const topTracks = await spotifyApiRequest('https://api.spotify.com/v1/me/top/tracks?limit=5&time_range=short_term');
+        if (topTracks.items.length > 0) {
+            url += `&seed_tracks=${topTracks.items.map(t => t.id).join(',')}`;
         }
-    } else if (seedTracks) {
-        url += `&seed_tracks=${seedTracks}`;
+    } catch (e) {
+        console.log("No se pudieron obtener top tracks. Usando semillas de respaldo...", e);
+        // Semillas de respaldo (ej: canciones populares)
+        url += '&seed_tracks=7GhIk7Il098yCjg4BQjzvb,0c6xIDDpzE81m2q797ordA';
     }
 
+    // 2. Si hay género, añadir artistas de ese género
+    if (genre !== 'any') {
+        try {
+            const artists = await spotifyApiRequest(`https://api.spotify.com/v1/search?q=genre:${genre}&type=artist&limit=5`);
+            if (artists.artists.items.length > 0) {
+                url += `&seed_artists=${artists.artists.items.map(a => a.id).join(',')}`;
+            }
+        } catch (e) {
+            console.log("No se encontraron artistas para el género", genre);
+        }
+    }
+
+    console.log("URL de recomendaciones:", url); // Para debug
     return await spotifyApiRequest(url);
 }
 
+// Función para crear playlist
 async function createPlaylist(name) {
     return await spotifyApiRequest(
         `https://api.spotify.com/v1/users/${userId}/playlists`,
@@ -239,9 +224,10 @@ async function createPlaylist(name) {
     );
 }
 
+// Función para añadir canciones
 async function addTracksToPlaylist(playlistId, tracks) {
     const trackUris = tracks.map(track => track.uri);
-    await spotifyApiRequest(
+    return await spotifyApiRequest(
         `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
         'POST',
         {
@@ -250,20 +236,20 @@ async function addTracksToPlaylist(playlistId, tracks) {
     );
 }
 
-// Funciones auxiliares
+// Función para mostrar vista previa
 function displayTrackPreview(tracks) {
     let html = `
         <div class="track-list">
             <h3>Vista previa de tu playlist</h3>
-            <p>Revisa las canciones antes de crear:</p>
+            <p>Estas son las primeras canciones:</p>
             <ul>
     `;
     
-    tracks.forEach(track => {
+    tracks.slice(0, 10).forEach(track => { // Muestra solo las primeras 10
+        const imageUrl = track.album.images.find(img => img.height === 64)?.url || track.album.images[0]?.url;
         html += `
             <li>
-                <img src="${track.album.images.find(img => img.height === 64)?.url || track.album.images[0]?.url}" 
-                     alt="${track.name}">
+                <img src="${imageUrl || 'https://via.placeholder.com/50'}" alt="${track.name}">
                 <div class="track-info">
                     <div class="track-name">${track.name}</div>
                     <div class="track-artist">${track.artists.map(a => a.name).join(', ')}</div>
@@ -283,10 +269,48 @@ function displayTrackPreview(tracks) {
     playlistResult.innerHTML = html;
 }
 
+// ----------------------------
+// Funciones auxiliares
+// ----------------------------
+
+// Función mejorada para peticiones API
+async function spotifyApiRequest(url, method = 'GET', data = null) {
+    try {
+        const config = {
+            method,
+            url,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        };
+        
+        if (data) config.data = data;
+        
+        const response = await axios(config);
+        return response.data;
+    } catch (error) {
+        console.error("Error en la petición a Spotify:", {
+            url: url,
+            error: error.response?.data || error.message
+        });
+        
+        if (error.response?.status === 401) {
+            showError('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
+            logout();
+        }
+        
+        throw new Error(error.response?.data?.error?.message || "Error al conectar con Spotify");
+    }
+}
+
 function showError(message) {
     playlistResult.innerHTML = `
         <div class="error-message">
             <p>${message}</p>
+            <button onclick="window.location.reload()" class="secondary-btn">
+                <i class="fas fa-sync-alt"></i> Recargar
+            </button>
         </div>
     `;
 }
@@ -298,6 +322,4 @@ function logout() {
     recommendedTracks = [];
     loginSection.style.display = 'block';
     appContent.style.display = 'none';
-    playlistResult.innerHTML = '';
-    actionButtons.style.display = 'none';
 }
