@@ -1,12 +1,10 @@
-// Spotify API Configuration - SECURE VERSION
-const SPOTIFY_CLIENT_ID = '969753f2997a48a2afb69649a4f3b800'; // Replace with your actual Client ID
+// Spotify API Configuration
+const SPOTIFY_CLIENT_ID = 'TU_CLIENT_ID'; // ¡Reemplaza esto!
 const SPOTIFY_REDIRECT_URI = 'https://ra-rauw.github.io/Spotify-AI/';
 const SPOTIFY_SCOPES = [
     'playlist-modify-public',
-    'playlist-modify-private',
     'user-top-read',
-    'user-library-read',
-    'user-read-private'
+    'user-library-read'
 ].join(' ');
 
 // DOM Elements
@@ -20,13 +18,13 @@ const newPlaylistBtn = document.getElementById('newPlaylistBtn');
 const playlistResult = document.getElementById('playlistResult');
 const actionButtons = document.getElementById('actionButtons');
 
-// Global Variables
+// State Management
 let accessToken = null;
 let userId = null;
 let currentPlaylistUrl = null;
 let recommendedTracks = [];
 
-// 1. Authentication
+// 1. Authentication Flow
 loginBtn.addEventListener('click', () => {
     const authUrl = `https://accounts.spotify.com/authorize?client_id=${SPOTIFY_CLIENT_ID}&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}&scope=${encodeURIComponent(SPOTIFY_SCOPES)}&response_type=token&show_dialog=true`;
     window.location.href = authUrl;
@@ -41,58 +39,55 @@ window.addEventListener('load', () => {
         accessToken = params.get('access_token');
         const expiresIn = params.get('expires_in');
         
+        // Clean URL
         window.history.replaceState({}, document.title, window.location.pathname);
+        
         initializeApp();
         
+        // Auto-logout when token expires
         setTimeout(() => {
-            showError('Session expired. Please login again.');
+            showError('Tu sesión ha expirado. Por favor inicia sesión nuevamente.');
             logout();
         }, expiresIn * 1000);
     }
 });
 
-// 3. Initialize App
+// 3. App Initialization
 async function initializeApp() {
     try {
         loginSection.style.display = 'none';
         appContent.style.display = 'block';
         
-        const response = await spotifyApiRequest('https://api.spotify.com/v1/me');
-        userId = response.id;
+        const userData = await spotifyApiRequest('https://api.spotify.com/v1/me');
+        userId = userData.id;
         
-        const welcome = document.createElement('p');
-        welcome.textContent = `Welcome, ${response.display_name || 'User'}`;
-        welcome.style.textAlign = 'center';
-        welcome.style.marginBottom = '20px';
-        welcome.style.fontWeight = '600';
-        appContent.insertBefore(welcome, appContent.firstChild);
+        displayWelcomeMessage(userData.display_name || 'Usuario');
         
     } catch (error) {
         console.error('Initialization error:', error);
-        showError('Failed to connect to Spotify');
+        showError('Error al conectar con Spotify');
     }
 }
 
-// 4. Generate Recommendations
+// 4. Recommendation Generation
 generateBtn.addEventListener('click', async () => {
     if (!accessToken) {
-        showError('Please login with Spotify first');
+        showError('Por favor inicia sesión primero');
         return;
     }
     
-    const playlistName = document.getElementById('playlistName').value || 'My Generated Playlist';
-    const songCount = document.getElementById('songCount').value;
+    const playlistName = document.getElementById('playlistName').value || 'Mi Playlist';
+    const songCount = parseInt(document.getElementById('songCount').value) || 20;
     const genre = document.getElementById('genre').value;
     
     try {
-        showLoading();
+        showLoading('Generando tu playlist...');
         
-        // Get recommendations with fallback seeds
         const recommendations = await getRecommendations(songCount, genre);
         recommendedTracks = recommendations.tracks;
         
         if (!recommendedTracks?.length) {
-            throw new Error('No tracks found for these filters');
+            throw new Error('No se encontraron canciones con estos filtros');
         }
         
         displayTrackPreview(recommendedTracks);
@@ -100,18 +95,18 @@ generateBtn.addEventListener('click', async () => {
         
     } catch (error) {
         console.error('Generation error:', error);
-        showError(error.message || 'Failed to generate playlist. Try another genre.');
+        showError(error.message || 'Error al generar. Intenta con otro género.');
     }
 });
 
-// 5. Confirm Playlist Creation
+// 5. Playlist Creation
 confirmBtn.addEventListener('click', async () => {
     if (!recommendedTracks.length) return;
     
-    const playlistName = document.getElementById('playlistName').value || 'My Generated Playlist';
+    const playlistName = document.getElementById('playlistName').value || 'Mi Playlist';
     
     try {
-        showLoading('Creating playlist on Spotify...');
+        showLoading('Creando playlist en Spotify...');
         
         const playlist = await createPlaylist(playlistName);
         await addTracksToPlaylist(playlist.id, recommendedTracks);
@@ -122,37 +117,44 @@ confirmBtn.addEventListener('click', async () => {
         
     } catch (error) {
         console.error('Creation error:', error);
-        showError('Failed to create playlist. Please try again.');
+        showError('Error al crear la playlist');
     }
 });
 
-// Helper Functions
+// Core Functions
 async function getRecommendations(limit, genre) {
+    // Validate parameters
+    limit = Math.min(Math.max(limit, 5), 100); // Force between 5-100
+    
     let url = `https://api.spotify.com/v1/recommendations?limit=${limit}&market=ES`;
     
-    // Try user's top tracks first
+    // 1. Get seed tracks (user's top tracks or fallback)
     try {
         const topTracks = await spotifyApiRequest('https://api.spotify.com/v1/me/top/tracks?limit=5&time_range=short_term');
         if (topTracks.items.length > 0) {
-            url += `&seed_tracks=${topTracks.items.slice(0, 3).map(t => t.id).join(',')}`;
+            url += `&seed_tracks=${topTracks.items[0].id}`;
+        } else {
+            // Fallback seeds (global hits)
+            url += '&seed_tracks=7GhIk7Il098yCjg4BQjzvb,0c6xIDDpzE81m2q797ordA';
         }
-    } catch (e) {
-        console.log("Using fallback seeds");
-        url += '&seed_tracks=7GhIk7Il098yCjg4BQjzvb,0c6xIDDpzE81m2q797ordA';
+    } catch (error) {
+        console.error('Failed to get top tracks:', error);
+        url += '&seed_tracks=5CeL9C3bsoe4yzYS1Qz8cw'; // Additional fallback
     }
 
-    // Add genre if specified
+    // 2. Add genre if specified
     if (genre !== 'any') {
         try {
-            const artists = await spotifyApiRequest(`https://api.spotify.com/v1/search?q=genre:${genre}&type=artist&limit=3`);
+            const artists = await spotifyApiRequest(`https://api.spotify.com/v1/search?q=genre:${genre}&type=artist&limit=1`);
             if (artists.artists.items.length > 0) {
-                url += `&seed_artists=${artists.artists.items.slice(0, 2).map(a => a.id).join(',')}`;
+                url += `&seed_artists=${artists.artists.items[0].id}`;
             }
-        } catch (e) {
-            console.log("Couldn't find genre artists");
+        } catch (error) {
+            console.error('Failed to get genre artists:', error);
         }
     }
 
+    console.log('Final recommendations URL:', url); // Debug
     return spotifyApiRequest(url);
 }
 
@@ -162,8 +164,8 @@ async function createPlaylist(name) {
         'POST',
         {
             name: name,
-            description: 'Auto-generated playlist via Spotify API',
-            public: false // Private by default
+            description: 'Creada con Spotify API',
+            public: false
         }
     );
 }
@@ -173,13 +175,22 @@ async function addTracksToPlaylist(playlistId, tracks) {
         `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
         'POST',
         {
-            uris: tracks.slice(0, 100).map(track => track.uri) // Spotify limits to 100 tracks
+            uris: tracks.map(track => track.uri).slice(0, 100) // Spotify limit
         }
     );
 }
 
 // UI Functions
-function showLoading(message = 'Generating your playlist...') {
+function displayWelcomeMessage(name) {
+    const welcome = document.createElement('p');
+    welcome.textContent = `Hola, ${name}`;
+    welcome.style.textAlign = 'center';
+    welcome.style.marginBottom = '20px';
+    welcome.style.fontWeight = '600';
+    appContent.insertBefore(welcome, appContent.firstChild);
+}
+
+function showLoading(message) {
     playlistResult.innerHTML = `
         <div class="loading">
             <i class="fas fa-spinner"></i>
@@ -192,8 +203,8 @@ function showLoading(message = 'Generating your playlist...') {
 function showSuccess(name, count) {
     playlistResult.innerHTML = `
         <div class="success-message">
-            <h3>Playlist created successfully!</h3>
-            <p>${name} with ${count} tracks</p>
+            <h3>¡Playlist creada!</h3>
+            <p>${name} con ${count} canciones</p>
         </div>
     `;
 }
@@ -201,11 +212,11 @@ function showSuccess(name, count) {
 function displayTrackPreview(tracks) {
     playlistResult.innerHTML = `
         <div class="track-list">
-            <h3>Playlist Preview</h3>
+            <h3>Vista previa</h3>
             <ul>
                 ${tracks.slice(0, 10).map(track => `
                 <li>
-                    <img src="${track.album.images.find(img => img.height === 64)?.url || track.album.images[0]?.url || 'https://via.placeholder.com/50'}" 
+                    <img src="${track.album.images.find(img => img.height === 64)?.url || track.album.images[0]?.url}" 
                          alt="${track.name}">
                     <div class="track-info">
                         <div class="track-name">${track.name}</div>
@@ -219,8 +230,8 @@ function displayTrackPreview(tracks) {
 }
 
 function toggleButtons(showConfirm, showOpen = false) {
-    confirmBtn.style.display = showConfirm ? 'inline-flex' : 'none';
-    openSpotifyBtn.style.display = showOpen ? 'inline-flex' : 'none';
+    confirmBtn.style.display = showConfirm ? 'flex' : 'none';
+    openSpotifyBtn.style.display = showOpen ? 'flex' : 'none';
     actionButtons.style.display = 'flex';
 }
 
@@ -229,7 +240,7 @@ function showError(message) {
         <div class="error-message">
             <p>${message}</p>
             <button onclick="window.location.reload()" class="secondary-btn">
-                <i class="fas fa-sync-alt"></i> Reload
+                <i class="fas fa-sync-alt"></i> Reintentar
             </button>
         </div>
     `;
@@ -261,18 +272,20 @@ async function spotifyApiRequest(url, method = 'GET', data = null) {
         const response = await axios(config);
         return response.data;
     } catch (error) {
-        console.error("API Error:", {
+        console.error('API Error:', {
             url,
             status: error.response?.status,
             error: error.response?.data?.error || error.message
         });
         
         if (error.response?.status === 401) {
-            showError('Session expired. Please login again.');
+            showError('Sesión expirada. Por favor inicia sesión nuevamente.');
             logout();
+        } else if (error.response?.status === 404) {
+            throw new Error('No se encontraron resultados. Prueba con otros parámetros.');
         }
         
-        throw new Error(error.response?.data?.error?.message || "Spotify API request failed");
+        throw new Error(error.response?.data?.error?.message || 'Error en la API de Spotify');
     }
 }
 
