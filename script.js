@@ -1,5 +1,5 @@
 // Spotify API Configuration - SECURE VERSION
-const SPOTIFY_CLIENT_ID = 'INSERT_YOUR_CLIENT_ID_HERE'; // Replace with your actual Client ID
+const SPOTIFY_CLIENT_ID = '969753f2997a48a2afb69649a4f3b800'; // Replace with your actual Client ID
 const SPOTIFY_REDIRECT_URI = 'https://ra-rauw.github.io/Spotify-AI/';
 const SPOTIFY_SCOPES = [
     'playlist-modify-public',
