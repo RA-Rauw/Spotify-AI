@@ -2,7 +2,7 @@
 const SPOTIFY_CLIENT_ID = '969753f2997a48a2afb69649a4f3b800'; // Reemplaza con tu Client ID
 const SPOTIFY_REDIRECT_URI = window.location.href.includes('localhost') 
     ? 'http://localhost:8000/' 
-    : 'https://ra-rauw.github.io/Spotify-AI//';
+    : 'https://ra-rauw.github.io/Spotify-AI/';
 const SPOTIFY_SCOPES = [
     'playlist-modify-public',
     'playlist-modify-private',
