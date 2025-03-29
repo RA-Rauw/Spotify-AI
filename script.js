@@ -1,5 +1,5 @@
 // Spotify API Configuration
-const SPOTIFY_CLIENT_ID = 'TU_CLIENT_ID'; // ¡Reemplaza esto!
+const SPOTIFY_CLIENT_ID = '969753f2997a48a2afb69649a4f3b800'; // ¡Reemplaza esto!
 const SPOTIFY_REDIRECT_URI = 'https://ra-rauw.github.io/Spotify-AI/';
 const SPOTIFY_SCOPES = [
     'playlist-modify-public',
